@@ -2,9 +2,9 @@ const Vendor = require('../models/vendorModel');
 const User = require('../models/userModel');
 const Menu = require('../models/menuModel');
 
-// @desc    Submit / Lengkapi Profil Vendor
-// @route   POST /api/vendor/profile
-// @access  Private (Role Vendor)
+// @desc    Ambil Publik Vendor yang sudah Approved
+// @route   GET /api/vendor/public
+// @access  Public
 const getPublicVendors = async (req, res) => {
   try {
     const { kategori, search } = req.query;
@@ -15,7 +15,7 @@ const getPublicVendors = async (req, res) => {
     }
 
     if (search) {
-      query.namaVendor = { $regex: search, $options: 'i' };
+      query.namaVendor = { $regex: search,$options: 'i' };
     }
 
     const vendors = await Vendor.find(query).select(
@@ -31,6 +31,31 @@ const getPublicVendors = async (req, res) => {
     res.status(500).json({ success: false, message: 'Gagal memuat katalog vendor' });
   }
 };
+
+
+// @desc    Ambil Profil Vendor yang Sedang Login
+// @route   GET /api/vendor/profile
+// @access  Private (Role Vendor)
+const getVendorProfile = async (req, res) => {
+  try {
+    const vendorProfile = await Vendor.findOne({ userId: req.user.id });
+    
+    if (!vendorProfile) {
+      return res.status(404).json({
+        success: false,
+        message: 'Profil vendor belum ditemukan',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: vendorProfile,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Gagal memuat profil vendor' });
+  }
+};
+
 
 // @desc    Ambil Menu dari Vendor Tertentu
 // @route   GET /api/vendor/:id/menus
@@ -48,6 +73,9 @@ const getVendorMenus = async (req, res) => {
   }
 };
 
+// @desc    Submit / Lengkapi Profil Vendor
+// @route   POST /api/vendor/profile
+// @access  Private (Role Vendor)
 const createOrUpdateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -66,6 +94,7 @@ const createOrUpdateProfile = async (req, res) => {
       metodePembayaran,
     } = req.body;
 
+    // Update atau buat profil vendor dengan status 'waiting_approval'
     const vendorProfile = await Vendor.findOneAndUpdate(
       { userId },
       {
@@ -84,9 +113,10 @@ const createOrUpdateProfile = async (req, res) => {
         metodePembayaran,
         status: 'waiting_approval',
       },
-      { new: true, upsert: true, runValidators: true }
+      { returnDocument: 'after', upsert: true, runValidators: true }
     );
 
+    // Sinkronisasi status di koleksi User
     await User.findByIdAndUpdate(userId, {
       vendorStatus: 'waiting_approval',
       isVerified: false,
@@ -111,7 +141,7 @@ const getAllVendorsForAdmin = async (req, res) => {
     const filter = status ? { status } : {};
 
     const vendors = await Vendor.find(filter)
-      .populate('userId', 'name username email phone isVerified')
+      .populate('userId', 'name username email phone isVerified vendorStatus')
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -130,7 +160,7 @@ const getAllVendorsForAdmin = async (req, res) => {
 
 const updateApprovalStatus = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params; // ID dari user
     const { status } = req.body; // 'approved' atau 'rejected'
 
     if (!['approved', 'rejected'].includes(status)) {
@@ -140,14 +170,14 @@ const updateApprovalStatus = async (req, res) => {
       });
     }
 
-    // Langsung cari dan update dokumen di koleksi User
+    // 1. Update status pada koleksi User
     const user = await User.findByIdAndUpdate(
       id,
       {
         isVerified: status === 'approved',
         vendorStatus: status,
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!user) {
@@ -156,6 +186,13 @@ const updateApprovalStatus = async (req, res) => {
         message: 'Akun user/vendor tidak ditemukan',
       });
     }
+
+    // 2. [WAJIB ADA] Update juga status pada koleksi Vendor agar sinkron dengan User
+    const updatedVendor = await Vendor.findOneAndUpdate(
+      { userId: user._id },
+      { status: status },
+      { returnDocument: 'after' }
+    );
 
     res.status(200).json({
       success: true,
@@ -167,6 +204,7 @@ const updateApprovalStatus = async (req, res) => {
         role: user.role,
         isVerified: user.isVerified,
         vendorStatus: user.vendorStatus,
+        vendorProfileStatus: updatedVendor ? updatedVendor.status : null,
       },
     });
   } catch (error) {
@@ -176,9 +214,11 @@ const updateApprovalStatus = async (req, res) => {
       message: 'Terjadi kesalahan server saat memproses approval',
     });
   }
-
 };
 
+// @desc    Vendor: Tambah Menu Hidangan
+// @route   POST /api/vendor/menu
+// @access  Private (Role Vendor)
 const addVendorMenu = async (req, res) => {
   try {
     const { namaMenu, harga, deskripsi, kategori } = req.body;
@@ -211,8 +251,30 @@ const addVendorMenu = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-  
 
+// @desc    Ambil Menu milik Vendor yang Sedang Login
+// @route   GET /api/vendor/my-menus
+// @access  Private (Role Vendor)
+const getMyMenus = async (req, res) => {
+  try {
+    // 1. Cari profil vendor berdasarkan user ID yang login dari token
+    const vendor = await Vendor.findOne({ userId: req.user.id });
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: 'Vendor tidak ditemukan' });
+    }
+
+    // 2. Ambil semua menu berdasarkan vendorId tersebut
+    const menus = await Menu.find({ vendorId: vendor._id });
+    
+    res.status(200).json({
+      success: true,
+      count: menus.length,
+      data: menus,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Gagal memuat menu vendor' });
+  }
+};
 
 module.exports = {
   createOrUpdateProfile,
@@ -221,4 +283,6 @@ module.exports = {
   getPublicVendors,
   getVendorMenus,
   addVendorMenu,
+  getVendorProfile,
+  getMyMenus,
 };

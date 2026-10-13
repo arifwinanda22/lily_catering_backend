@@ -1,4 +1,5 @@
 const User = require('../models/userModel');
+const Vendor = require('../models/vendorModel');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { JWT_SECRET, JWT_EXPIRES_IN } = require('../config/env');
@@ -48,6 +49,15 @@ const login = async (req, res) => {
       });
     }
 
+    // [TAMBAHAN] Jika user adalah vendor, cek apakah dokumen profil detailnya sudah ada di collection Vendor
+    let hasProfile = false;
+    if (user.role === 'vendor') {
+      const vendorProfile = await Vendor.findOne({ userId: user._id });
+      if (vendorProfile) {
+        hasProfile = true;
+      }
+    }
+
     const token = generateToken(user._id, user.role);
 
     res.status(200).json({
@@ -61,6 +71,7 @@ const login = async (req, res) => {
         role: user.role,
         isVerified: user.isVerified,
         vendorStatus: user.vendorStatus,
+        hasProfile, // <-- [TAMBAHAN] Kirim status ini agar frontend tahu vendor sudah isi form profil atau belum
         token,
       },
     });
