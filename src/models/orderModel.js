@@ -58,10 +58,10 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-    status: {
+   status: {
       type: String,
-      enum: ['Aktif', 'Selesai', 'Dibatalkan'],
-      default: 'Aktif',
+      enum: ['Menunggu', 'Dikonfirmasi', 'Dikirim', 'Selesai', 'Dibatalkan'], 
+      default: 'Menunggu' 
     },
     tracking: {
       driverName: { type: String, default: 'Belum Ditugaskan' },

@@ -40,7 +40,7 @@ const createOrder = async (req, res) => {
       lokasiPengiriman,
       metodePembayaran,
       paymentStatus: 'Menunggu Pembayaran',
-      status: 'Aktif',
+      status: 'Menunggu',
       tracking: {
         driverName: 'Menunggu Driver',
         driverPhone: '-',
@@ -140,14 +140,28 @@ const updateOrderTracking = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
     }
 
+    // 1. Update info kurir jika ada
     if (driverName) order.tracking.driverName = driverName;
     if (driverPhone) order.tracking.driverPhone = driverPhone;
-    if (status) order.status = status; // 'Aktif', 'Selesai', 'Dibatalkan'
 
-    if (logText) {
+    let autoLogText = logText;
+
+    // 2. Cek apakah ada perubahan status
+    if (status && order.status !== status) {
+      order.status = status;
+      
+      // Jika status berubah tapi vendor tidak menulis pesan log manual, buatkan otomatis
+      if (!autoLogText) {
+        let statusLabel = status === 'Aktif' ? 'Dikonfirmasi' : status;
+        autoLogText = `Status pesanan diperbarui menjadi: ${statusLabel}`;
+      }
+    }
+
+    // 3. Masukkan ke riwayat tracking (di urutan paling atas/unshift)
+    if (autoLogText) {
       order.tracking.logs.unshift({
         time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
-        text: logText,
+        text: autoLogText,
       });
     }
 
@@ -155,11 +169,12 @@ const updateOrderTracking = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Status pengiriman kurir berhasil diperbarui',
+      message: 'Status pesanan berhasil diperbarui',
       data: order,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Gagal memperbarui tracking' });
+    console.error("Tracking Error:", error);
+    res.status(500).json({ success: false, message: error.message || 'Gagal memperbarui tracking' });
   }
 };
 
